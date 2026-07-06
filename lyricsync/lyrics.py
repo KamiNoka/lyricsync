@@ -18,6 +18,8 @@ _USER_AGENT = "lyricsync/0.1 (https://github.com/kami/lyricsync)"
 
 # [mm:ss.xx] или [mm:ss] — тайм-теги LRC. В строке может быть несколько.
 _TIME_TAG = re.compile(r"\[(\d+):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+# [offset:±ms] — общий сдвиг синхронизации, встроенный в LRC.
+_OFFSET_TAG = re.compile(r"\[offset:\s*([+-]?\d+)\s*\]", re.IGNORECASE)
 
 
 @dataclass
@@ -66,6 +68,15 @@ def parse_lrc(content: str) -> list[LyricLine]:
 
     Поддерживает несколько тайм-тегов на строке и пропускает метадату ([ar:], [ti:]).
     """
+    # Тег [offset:±ms] — общий сдвиг из самого LRC. Положительный = строки раньше.
+    file_offset = 0.0
+    m_off = _OFFSET_TAG.search(content)
+    if m_off:
+        try:
+            file_offset = int(m_off.group(1)) / 1000.0
+        except ValueError:
+            file_offset = 0.0
+
     lines: list[LyricLine] = []
     for raw in content.splitlines():
         tags = list(_TIME_TAG.finditer(raw))
@@ -79,8 +90,8 @@ def parse_lrc(content: str) -> list[LyricLine]:
             frac = m.group(3) or "0"
             # доли: 2 знака = сотые, 3 = тысячные
             frac_val = int(frac) / (10 ** len(frac))
-            t = mm * 60 + ss + frac_val
-            lines.append(LyricLine(time=t, text=text))
+            t = mm * 60 + ss + frac_val - file_offset
+            lines.append(LyricLine(time=max(0.0, t), text=text))
 
     lines.sort(key=lambda l: l.time)
     return lines

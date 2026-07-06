@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import select
+import sys
 import time
 from dataclasses import dataclass
 
@@ -42,7 +44,10 @@ class LyricEngine:
                 hi = mid
         return lo - 1
 
-    def view_at(self, position: float, typewriter: bool) -> LineView:
+    def view_at(
+        self, position: float, typewriter: bool,
+        speed: float = 0.75,
+    ) -> LineView:
         idx = self._index_at(position)
         if idx < 0:
             return LineView(index=-1, reveal=0, line=None)
@@ -59,9 +64,9 @@ class LyricEngine:
         dur = max(dur, 0.1)
 
         elapsed = position - line.time
-        # Печатаем не всю длительность, а первые ~85% — чтобы строка «дочиталась»
-        # до появления следующей и не мигала.
-        frac = min(1.0, elapsed / (dur * 0.85))
+        # Печатаем за первые (speed) от длительности, чтобы строка «дочитывалась»
+        # раньше вокала и не отставала. speed<1 = текст успевает вперёд.
+        frac = min(1.0, elapsed / (dur * max(speed, 0.05)))
         reveal = int(round(frac * len(line.text)))
         return LineView(index=idx, reveal=reveal, line=line)
 
@@ -89,11 +94,17 @@ class Renderer:
             return self._gradient_text(s)
         return Text(s, style=self.cfg.color_current)
 
-    def render(self, view: LineView, engine: LyricEngine, state: PlaybackState) -> Group:
+    def render(
+        self, view: LineView, engine: LyricEngine, state: PlaybackState,
+        offset: float = 0.0,
+    ) -> Group:
         blocks: list = []
 
-        # Заголовок трека
-        header = Text(f"♪ {state.artist} — {state.title}", style="dim italic")
+        # Заголовок трека (+ текущий сдвиг, если ненулевой)
+        head = f"♪ {state.artist} — {state.title}"
+        if abs(offset) > 1e-3:
+            head += f"   ⏱ {offset:+.1f}s"
+        header = Text(head, style="dim italic")
         blocks.append(Align.center(header))
         blocks.append(Text(""))
 
@@ -171,6 +182,8 @@ class Display:
         self.cfg = cfg
         self.console = console or Console()
         self.renderer = Renderer(cfg)
+        # Текущий сдвиг синхронизации (стартует из конфига, меняется на лету)
+        self.offset = cfg.offset
 
     def run_track(
         self,
@@ -197,7 +210,7 @@ class Display:
         # Независимый таймер опроса источника (НЕ завязан на base_mono!)
         last_poll = 0.0
 
-        with Live(
+        with raw_mode(), Live(
             console=self.console,
             refresh_per_second=max(self.cfg.poll_hz, 15.0),
             screen=False,
@@ -225,20 +238,42 @@ class Display:
                         base_mono = now
                     last_state = fresh
 
+                # Живая подстройка offset клавишами +/- (0 — сброс)
+                self._handle_keys()
+
                 # Текущая позиция: на паузе — заморожена, иначе экстраполируем
                 if last_state.is_playing:
                     pos = base_pos + (now - base_mono)
                 else:
                     pos = base_pos
 
-                view = engine.view_at(pos, self.cfg.typewriter)
-                live.update(self._centered(self.renderer.render(view, engine, last_state)))
+                # offset>0 => смотрим вперёд => текст показывается раньше (не отстаёт)
+                lookup = pos + self.offset
+                view = engine.view_at(lookup, self.cfg.typewriter, self.cfg.typewriter_speed)
+                live.update(self._centered(
+                    self.renderer.render(view, engine, last_state, self.offset)
+                ))
 
                 time.sleep(0.03)
 
     def _centered(self, body: Group) -> Align:
         """Центрирует контент по вертикали и горизонтали на всю высоту терминала."""
         return Align.center(body, vertical="middle", height=self.console.size.height)
+
+    def _handle_keys(self) -> None:
+        """Неблокирующее чтение stdin: +/- сдвигают offset, 0 сбрасывает.
+
+        Работает только в интерактивном TTY. Шаг — 0.1с.
+        """
+        ch = _read_key()
+        if ch is None:
+            return
+        if ch in ("+", "="):        # '=' — тот же клавиш без Shift
+            self.offset += 0.1
+        elif ch in ("-", "_"):
+            self.offset -= 0.1
+        elif ch == "0":
+            self.offset = 0.0
 
     def _run_plain(self, source, lyrics, initial, interval) -> PlaybackState | None:
         """Статичный текст: рисуем один раз, ждём смены трека."""
@@ -251,3 +286,54 @@ class Display:
                 return None
             if fresh.track_key != initial.track_key:
                 return fresh
+
+
+# ── Неблокирующий ввод с клавиатуры ──────────────────────────────────────────
+
+def _read_key() -> str | None:
+    """Читает один символ из stdin без блокировки. None, если ничего/не TTY."""
+    if not sys.stdin.isatty():
+        return None
+    try:
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+    except (OSError, ValueError):
+        return None
+    if not r:
+        return None
+    try:
+        return sys.stdin.read(1)
+    except (OSError, ValueError):
+        return None
+
+
+class raw_mode:
+    """Переводит терминал в cbreak: клавиши приходят сразу, без Enter и эха.
+
+    Вне TTY — no-op. Восстанавливает настройки при выходе.
+    """
+
+    def __init__(self):
+        self._fd = None
+        self._saved = None
+
+    def __enter__(self):
+        if not sys.stdin.isatty():
+            return self
+        try:
+            import termios
+            import tty
+            self._fd = sys.stdin.fileno()
+            self._saved = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+        except Exception:  # noqa: BLE001 — нет termios / не поддерживается
+            self._fd = None
+        return self
+
+    def __exit__(self, *exc):
+        if self._fd is not None and self._saved is not None:
+            try:
+                import termios
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._saved)
+            except Exception:  # noqa: BLE001
+                pass
+        return False

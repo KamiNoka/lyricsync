@@ -39,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-typewriter", action="store_true",
         help="мгновенная смена строк вместо посимвольной печати",
     )
+    p.add_argument(
+        "--offset", type=float, default=None, metavar="SEC",
+        help="сдвиг синхронизации, сек (>0 = текст раньше). В рантайме: +/- , 0 сброс",
+    )
     p.add_argument("--no-notify", action="store_true", help="отключить desktop-уведомления")
     p.add_argument("--no-scrobble", action="store_true", help="не вести лог сыгранных треков")
     p.add_argument("--romanize", action="store_true", help="транслитерация нелатиницы (pykakasi)")
@@ -59,6 +63,8 @@ def _apply_overrides(cfg: Config, args) -> Config:
         cfg.scrobble = False
     if args.romanize:
         cfg.romanize = True
+    if args.offset is not None:
+        cfg.offset = args.offset
     return cfg
 
 

@@ -28,6 +28,12 @@ class Config:
     # Тайминг
     poll_hz: float = 10.0        # частота опроса позиции
     typewriter: bool = True      # печатать по символам или менять строку целиком
+    # Сдвиг синхронизации, сек. Положительный = показывать раньше (компенсирует
+    # задержку звука, напр. Bluetooth-наушники ~0.15-0.3с). Настраивается на лету +/-.
+    offset: float = 0.0
+    # Доля длительности строки, за которую typewriter дописывает её до конца.
+    # Меньше = текст «убегает» вперёд и успевает за вокалом. 1.0 = ровно до след. строки.
+    typewriter_speed: float = 0.75
 
     # Пути
     cache_dir: Path = DEFAULT_CACHE_DIR
@@ -68,7 +74,8 @@ def _merge(cfg: Config, data: dict) -> Config:
     updates: dict = {}
     for key in (
         "color_current", "color_next", "color_prev", "gradient",
-        "poll_hz", "typewriter", "notify", "scrobble", "romanize", "providers",
+        "poll_hz", "typewriter", "offset", "typewriter_speed",
+        "notify", "scrobble", "romanize", "providers",
     ):
         if key in src:
             updates[key] = src[key]
@@ -104,6 +111,14 @@ poll_hz = 10.0
 
 # Печатать построчно по символам (typewriter) или менять строку целиком
 typewriter = true
+
+# Сдвиг синхронизации (сек). Положительный = текст раньше (компенсирует задержку
+# звука, напр. Bluetooth ~0.15-0.3). В рантайме подстраивается клавишами +/-.
+offset = 0.0
+
+# Насколько быстро typewriter дописывает строку (доля её длительности).
+# Меньше = текст успевает за вокалом. 1.0 = ровно до следующей строки.
+typewriter_speed = 0.75
 
 # Уведомления и лог
 notify = true
