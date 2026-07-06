@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lyricsync"
+version = "0.1.0"
+description = "Терминальные синхронные тексты песен в стиле TikTok — печатаются в такт играющему треку"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "kami" }]
+keywords = ["lyrics", "lrc", "mpris", "spotify", "terminal", "karaoke"]
+
+dependencies = [
+    "rich>=13.0",
+    "syncedlyrics>=1.0",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+# Web API источник (Spotify OAuth) — нужен только если играешь без локального MPRIS-плеера
+web = ["spotipy>=2.23"]
+# Романизация нелатинских текстов (японский и т.п.)
+romanize = ["pykakasi>=2.2"]
+# Всё сразу
+full = ["spotipy>=2.23", "pykakasi>=2.2"]
+
+[project.scripts]
+lyricsync = "lyricsync.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/kami/lyricsync"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lyricsync*"]
